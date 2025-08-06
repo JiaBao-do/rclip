@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, fs, path::PathBuf};
+use std::{collections::HashMap, env, error::Error, fs, path::PathBuf};
 
 use arboard::Clipboard;
 use clap::{Parser, Subcommand};
@@ -23,7 +23,6 @@ enum Commands {
     Copy { key: String },
 }
 
-const DB_FILE: &str = "rclip_db.json";
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
@@ -69,9 +68,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn get_db_path() -> PathBuf {
+    let exe_path = env::current_exe().expect("Failed to get executable path");
+    let exe_dir = exe_path
+        .parent()
+        .expect("Failed to get executable directory");
+    exe_dir.join("rclip_db.json")
+}
+
 fn load_db() -> HashMap<String, String> {
-    if PathBuf::from(DB_FILE).exists() {
-        let content = fs::read_to_string(DB_FILE).unwrap_or_else(|_| "{}".to_string());
+    let db_path = get_db_path();
+    if PathBuf::from(&db_path).exists() {
+        let content = fs::read_to_string(db_path).unwrap_or_else(|_| "{}".to_string());
         serde_json::from_str(&content).unwrap_or_else(|_| HashMap::new())
     } else {
         HashMap::new()
@@ -80,5 +88,5 @@ fn load_db() -> HashMap<String, String> {
 
 fn save_db(db: &HashMap<String, String>) -> Result<(), std::io::Error> {
     let json = serde_json::to_string_pretty(db).unwrap();
-    fs::write(DB_FILE, json)
+    fs::write(get_db_path(), json)
 }
