@@ -2,11 +2,12 @@ use std::{collections::HashMap, env, error::Error, fs, path::PathBuf};
 
 use arboard::Clipboard;
 use clap::{Parser, Subcommand};
+use serde::{Deserialize, Serialize};
 
 #[derive(Parser)]
 #[command(
     name = "rclip",
-    version = "1.0",
+    version = "0.1.1",
     about = "A simple key-value store with clipboard support"
 )]
 struct Cli {
@@ -16,11 +17,33 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Get { key: String },
-    Set { key: String, value: String },
-    Del { key: String },
+    Get {
+        key: String,
+        #[arg(short = 'k', long)]
+        by_key: bool,
+    },
+    Set {
+        key: String,
+        value: String,
+    },
+    Del {
+        key: String,
+        #[arg(short = 'k', long)]
+        by_key: bool,
+    },
     List,
-    Copy { key: String },
+    Copy {
+        key: String,
+        #[arg(short = 'k', long)]
+        by_key: bool,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Record {
+    id: u64,
+    key: String,
+    value: String,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -29,20 +52,34 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut db = load_db();
 
     match cli.command {
-        Commands::Get { key } => {
-            if let Some(value) = db.get(&key) {
-                println!("{}", value);
+        Commands::Get { key, by_key } => {
+            let record = if by_key {
+                db.values().find(|r| r.key == key)
+            } else {
+                key.parse::<u64>().ok().and_then(|id| db.get(&id))
+            };
+
+            if let Some(rec) = record {
+                println!("{}", rec.value);
             } else {
                 println!("(nil)")
             }
         }
         Commands::Set { key, value } => {
-            db.insert(key.clone(), value.clone());
+            let id = db.keys().max().map(|x| x + 1).unwrap_or(1);
+            db.insert(id, Record { id, key, value });
             save_db(&db)?;
-            println!("OK");
+            println!("OK (id = {})", id);
         }
-        Commands::Del { key } => {
-            if db.remove(&key).is_some() {
+        Commands::Del { key, by_key } => {
+            let removed = if by_key {
+                let remove_id = db.iter().find(|(_, r)| r.key == key).map(|(id, _)| *id);
+                remove_id.and_then(|id| db.remove(&id))
+            } else {
+                key.parse::<u64>().ok().and_then(|id| db.remove(&id))
+            };
+
+            if removed.is_some() {
                 save_db(&db)?;
                 println!("(integer) 1");
             } else {
@@ -50,15 +87,23 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         Commands::List => {
-            for (k, v) in &db {
-                println!("{}=>{}", k, v)
+            let mut items: Vec<_> = db.values().collect();
+            items.sort_by_key(|r| r.id);
+            for rec in items {
+                println!("{} => ({} => {})", rec.id, rec.key, rec.value);
             }
         }
-        Commands::Copy { key } => {
-            if let Some(value) = db.get(&key) {
+        Commands::Copy { key, by_key } => {
+            let record = if by_key {
+                db.values().find(|r| r.key == key)
+            } else {
+                key.parse::<u64>().ok().and_then(|id| db.get(&id))
+            };
+
+            if let Some(rec) = record {
                 let mut clipboard = Clipboard::new()?;
-                let _ = clipboard.set_text(value.clone());
-                println!("copied '{}' to clipboard", value)
+                let _ = clipboard.set_text(rec.value.clone());
+                println!("copied '{}' to clipboard", rec.value)
             } else {
                 println!("(nil)")
             }
@@ -76,7 +121,7 @@ fn get_db_path() -> PathBuf {
     exe_dir.join("rclip_db.json")
 }
 
-fn load_db() -> HashMap<String, String> {
+fn load_db() -> HashMap<u64, Record> {
     let db_path = get_db_path();
     if PathBuf::from(&db_path).exists() {
         let content = fs::read_to_string(db_path).unwrap_or_else(|_| "{}".to_string());
@@ -86,7 +131,7 @@ fn load_db() -> HashMap<String, String> {
     }
 }
 
-fn save_db(db: &HashMap<String, String>) -> Result<(), std::io::Error> {
+fn save_db(db: &HashMap<u64, Record>) -> Result<(), std::io::Error> {
     let json = serde_json::to_string_pretty(db).unwrap();
     fs::write(get_db_path(), json)
 }
